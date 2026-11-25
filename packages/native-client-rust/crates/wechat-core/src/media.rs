@@ -1319,6 +1319,16 @@ impl Core {
         account: &str,
         request: MediaTransferRequest,
     ) -> Result<MediaJob> {
+        self.admit_media_transfer(account, request, true)
+    }
+    /// `explicit`: a caller asked for this attachment now. An automatic download passes
+    /// false, and never fetches again a voice note that already failed to decode.
+    pub(crate) fn admit_media_transfer(
+        self: &Arc<Self>,
+        account: &str,
+        request: MediaTransferRequest,
+        explicit: bool,
+    ) -> Result<MediaJob> {
         if let Some(id) = &request.asset_id {
             let captured = self.media_asset(account, id)?;
             ensure!(
@@ -1377,6 +1387,18 @@ impl Core {
                     _ => false,
                 };
                 if !renewable {
+                    break;
+                }
+                key = format!("download:{}:after:{}", asset.id, previous.id);
+            }
+        } else if explicit && asset.kind == MediaKind::Voice {
+            // A note this build could not decode may decode in a later one, and its failed job
+            // is not retryable. An explicit request goes past every job that ended that way:
+            // to the one that followed it, whatever state that is in, or to a new one.
+            while let Ok(previous) = self.store.media_job_by_key(account, &key) {
+                if previous.state != "failed"
+                    || previous.error_code.as_deref() != Some("media_processing_failed")
+                {
                     break;
                 }
                 key = format!("download:{}:after:{}", asset.id, previous.id);
@@ -1700,6 +1722,8 @@ impl Core {
                 core.perform_media_send_guarded(&account, &id, Some(&mut permit))
             };
             if let Err(error) = outcome {
+                // The job keeps only a short code; the daemon log keeps what actually went wrong.
+                eprintln!("media job {id} failed: {error:#}");
                 core.record_media_failure_diagnostics(&account, &id, &error)?;
                 core.fail_media_job(&account, &id, &classify_error(&error))?;
             }
@@ -2188,14 +2212,28 @@ impl Core {
                                 renewed = true;
                                 continue;
                             }
-                            Err(error) => return Err(error),
+                            Err(error) => {
+                                return Err(error.context(format!(
+                                    "voice chunk at {} of {length}",
+                                    bytes.len()
+                                )))
+                            }
                         };
                         ensure!(chunk.offset_matches, "media_integrity_failed");
                         bytes.extend(chunk.bytes);
                     }
                     self.save_state(account, &state)?;
                 }
-                let pcm = wechat_protocol::silk::decode(&bytes)?;
+                let pcm = match wechat_protocol::silk::decode(&bytes) {
+                    Ok(pcm) => pcm,
+                    Err(error) => {
+                        return Err(error.context(format!(
+                            "voice decode of {} bytes, first {:02x?}",
+                            bytes.len(),
+                            &bytes[..bytes.len().min(12)]
+                        )));
+                    }
+                };
                 official_writeback = Some(self.project_received_voice(account, id, &asset, &bytes));
                 if as_wav {
                     (

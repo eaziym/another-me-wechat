@@ -126,7 +126,7 @@ impl Core {
                 if asset.auto_download_allowed != Some(true) {
                     return Ok(None);
                 }
-                self.start_media_transfer(account, pending.request.clone())
+                self.admit_media_transfer(account, pending.request.clone(), false)
                     .map(|job| Some((job, asset.kind)))
             })();
             match outcome {

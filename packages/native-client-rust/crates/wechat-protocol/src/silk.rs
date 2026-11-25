@@ -89,7 +89,33 @@ pub fn validate_framing(input: &[u8]) -> Result<u32> {
     ensure!(packets > 0, "empty_silk_stream");
     Ok(packets * FRAME_MS)
 }
+/// A received stream without its trailing padding. Some senders put a note in a
+/// buffer sized for the worst case: the packets, then a length that is not
+/// positive, then zeros up to the advertised length. Only that exact shape is
+/// trimmed (at least one packet, an end marker, nothing but zeros after it);
+/// anything else is returned unchanged for [`validate_framing`] to refuse.
+pub fn trim_padding(input: &[u8]) -> &[u8] {
+    if input.len() < 12 || input.len() > MAX_STREAM_BYTES {
+        return input;
+    }
+    let mut p = 10;
+    while p + 2 <= input.len() {
+        let n = i16::from_le_bytes([input[p], input[p + 1]]) as i32;
+        if n <= 0 {
+            let padded = p > 10 && input[p + 2..].iter().all(|b| *b == 0);
+            return if padded { &input[..p] } else { input };
+        }
+        if n > 5120 || n as usize > input.len() - p - 2 {
+            return input;
+        }
+        p += 2 + n as usize;
+    }
+    input
+}
+/// Decode a received note. Trailing padding is dropped first; what a caller
+/// asks to send is still checked by [`validate_framing`] as it stands.
 pub fn decode(input: &[u8]) -> Result<Vec<i16>> {
+    let input = trim_padding(input);
     validate_framing(input)?;
     let mut pcm = vec![0i16; MAX_SAMPLES];
     let mut samples = 0i32;
@@ -146,6 +172,43 @@ mod tests {
         assert_eq!(decoded.len(), pcm.len());
         assert!(decoded.iter().any(|s| s.abs() > 1000));
         assert_eq!(&wav(&decoded).unwrap()[..4], b"RIFF");
+    }
+    #[test]
+    fn a_received_note_padded_to_its_advertised_length_decodes() {
+        let pcm = (0..16000)
+            .map(|i| ((i as f64 * 440.0 * std::f64::consts::TAU / 16000.0).sin() * 10000.0) as i16)
+            .collect::<Vec<_>>();
+        let encoded = encode(&pcm).unwrap();
+        // The shape seen from a phone: the packets, 00 80, then zeros.
+        let mut padded = encoded.clone();
+        padded.extend([0x00, 0x80]);
+        padded.extend(vec![0u8; 16 + 163 * 50 - padded.len()]);
+        assert_eq!(trim_padding(&padded), encoded.as_slice());
+        assert_eq!(decode(&padded).unwrap(), decode(&encoded).unwrap());
+        // The reference encoder's own end marker, with nothing after it.
+        let mut ended = encoded.clone();
+        ended.extend([0xff, 0xff]);
+        assert_eq!(decode(&ended).unwrap().len(), pcm.len());
+        // Sending stays strict, and an unpadded note is untouched.
+        assert!(validate_framing(&padded).is_err());
+        assert_eq!(trim_padding(&encoded), encoded.as_slice());
+    }
+    #[test]
+    fn only_zeros_after_an_end_marker_count_as_padding() {
+        let pcm = vec![1000i16; 3200];
+        let encoded = encode(&pcm).unwrap();
+        // Data after the marker is not padding: the stream is refused whole.
+        let mut trailing = encoded.clone();
+        trailing.extend([0x00, 0x80, 0, 0, 7, 0]);
+        assert_eq!(trim_padding(&trailing), trailing.as_slice());
+        assert!(decode(&trailing).is_err());
+        // A marker with no packet before it is an empty stream, not a note.
+        let mut empty = encoded[..10].to_vec();
+        empty.extend([0u8; 40]);
+        assert_eq!(trim_padding(&empty), empty.as_slice());
+        assert!(decode(&empty).is_err());
+        // A packet cut short is still refused.
+        assert!(decode(&encoded[..encoded.len() - 3]).is_err());
     }
     #[test]
     fn maximum_note_stays_within_derived_byte_bound() {
