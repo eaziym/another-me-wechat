@@ -203,13 +203,8 @@ impl Core {
                     self.save_incoming_group(account, &key, &job)?;
                 }
                 self.apply_incoming_group(account, &key, &job)?;
-                // Retain all verified response bodies for offline local repair.
-                let retained_key = key.replace("pending:", "receipt:");
-                self.store.put_runtime(
-                    account,
-                    &retained_key,
-                    &sealed_receipt(self, account, &retained_key, &job)?,
-                )?;
+                // The verified response bodies are not kept: no code read them back, and at up to
+                // a megabyte each they were most of the store within a day.
                 self.store.append_event_once(account,&format!("group-refreshed:{}",job.source),"group.updated",&json!({"groupId":job.group,"origin":job.origin,"source":"remote_sync_refresh","membersRefreshed":job.members,"announcementRefreshed":job.detail,"profileProjection":"partial"}))?;
                 self.store.put_runtime(account, &done(&job.source), b"1")?;
                 // Keep the completed job until its original command has been

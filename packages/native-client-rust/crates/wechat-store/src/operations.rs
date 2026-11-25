@@ -248,9 +248,15 @@ impl Store {
             .admitted
             .lock()
             .map_err(|_| anyhow::anyhow!("database admission lock poisoned"))?;
+        let in_use = self
+            .reading
+            .lock()
+            .map(|counts| counts.get(id).is_some_and(|count| *count > 0))
+            .unwrap_or(false);
         let (mut db, ()) = crate::admission::open_prepared(
             &path,
             Some(&admitted),
+            in_use,
             ACCOUNT_SCHEMA_VERSION,
             Self::prepare_account,
         )?;

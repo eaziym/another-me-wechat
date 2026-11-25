@@ -655,10 +655,10 @@ pub fn aged_runtime(key: &str) -> RuntimeRetention {
     ];
     // Raw replies kept for investigation and call diagnostics. No code reads
     // them back.
-    const RAW: [&str; 10] = [
+    // (`incoming-group-receipt:` is no longer written; `retention_step` removes what is left.)
+    const RAW: [&str; 9] = [
         "metadata-wire:",
         "metadata-unavailable:",
-        "incoming-group-receipt:",
         "call-host-diagnostic:",
         "call-media-error:",
         "call-media-diagnostic:",
@@ -841,9 +841,15 @@ impl Store {
             step.expired_previews = remove_expired_previews(&tx, now, &mut budget)?;
             let finished = remove_finished(&tx, now, &mut budget)?;
             let (removed, last, full) = age_runtime(&tx, now, runtime_after)?;
-            step.runtime_removed = removed + finished;
+            // Response bodies an earlier build kept for every group update. Nothing reads them.
+            // They are large, so a store holding many gives them up over several steps.
+            let raw = tx.execute(
+                "DELETE FROM runtime WHERE rowid IN (SELECT rowid FROM runtime WHERE key>='incoming-group-receipt:' AND key<'incoming-group-receipt;' LIMIT 64)",
+                [],
+            )?;
+            step.runtime_removed = removed + finished + raw;
             step.runtime_after = last;
-            step.more = budget <= 0 || full;
+            step.more = budget <= 0 || full || raw == 64;
             tx.commit()?;
             Ok(step)
         })
@@ -1578,6 +1584,26 @@ mod tests {
             .unwrap()
             .iter()
             .any(|e| e.kind == "operation.updated" && e.data["state"] == "expired"));
+    }
+
+    #[test]
+    fn group_response_bodies_an_earlier_build_kept_go_at_once() {
+        let (_temp, store) = fixture();
+        for key in ["incoming-group-held:aa", "incoming-group-pending:cc"] {
+            store.put_runtime("a", key, &[7; 4096]).unwrap();
+        }
+        // More than one step's worth: each step takes a bounded number and asks for another.
+        for n in 0..150 {
+            let key = format!("incoming-group-receipt:{n:03}");
+            store.put_runtime("a", &key, &[7; 4096]).unwrap();
+        }
+        let first = store.retention_step("a", unix_seconds(), 0).unwrap();
+        assert!(first.more && first.runtime_removed == 64);
+        assert_eq!(settle(&store, unix_seconds()).runtime_removed, 86);
+        let kept = |key: &str| store.runtime("a", key).unwrap().is_some();
+        assert!(!kept("incoming-group-receipt:000") && !kept("incoming-group-receipt:149"));
+        // Work that is waiting or was set aside is not a kept reply.
+        assert!(kept("incoming-group-held:aa") && kept("incoming-group-pending:cc"));
     }
 
     #[test]

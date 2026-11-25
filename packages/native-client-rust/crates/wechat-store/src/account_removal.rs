@@ -20,6 +20,7 @@ impl Store {
         let (control, ()) = admission::open_prepared(
             &path,
             Some(&admitted),
+            false,
             operations::ACCOUNT_SCHEMA_VERSION,
             Self::prepare_account,
         )?;

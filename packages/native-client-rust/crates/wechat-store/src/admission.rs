@@ -81,6 +81,13 @@ impl Family {
         }
         Ok(Self(members))
     }
+    /// Whether `path` is still the main database file this family was read from.
+    fn same_main(&self, path: &Path) -> Result<bool> {
+        match self.0.get("") {
+            Some(main) => Ok(wechat_platform::same_path_file(path, &main.file)?),
+            None => Ok(false),
+        }
+    }
     fn unchanged(&self, path: &Path) -> Result<bool> {
         let current = Self::read(path)?;
         if self.0.keys().ne(current.0.keys()) {
@@ -242,6 +249,7 @@ fn check(db: &Connection) -> Result<()> {
 pub(crate) fn open_prepared<T>(
     path: &Path,
     cache: Option<&AdmissionCache>,
+    in_use: bool,
     current: i64,
     prepare: impl Fn(&mut Connection) -> Result<T>,
 ) -> Result<(Connection, T)> {
@@ -258,15 +266,17 @@ pub(crate) fn open_prepared<T>(
         "database must be private and stable"
     );
     drop(permission_probe);
-    if cache
-        .and_then(|c| c.get(path))
-        .map(|known| known.unchanged(path))
-        .transpose()?
-        .unwrap_or(false)
-    {
-        let mut db = connect(path)?;
-        let value = prepare(&mut db)?;
-        return Ok((db, value));
+    // `in_use`: this process holds a read snapshot on this database right now, so the
+    // write-ahead log and its index are live files of our own open connection and change under
+    // it. An admitted database that is still the same file is then opened as it is. Without
+    // this, every reopen during a read copied the whole store twice to validate it, several
+    // times a second. With no snapshot open, the family must be exactly as it was left.
+    if let Some(known) = cache.and_then(|c| c.get(path)) {
+        if known.unchanged(path)? || (in_use && known.same_main(path)?) {
+            let mut db = connect(path)?;
+            let value = prepare(&mut db)?;
+            return Ok((db, value));
+        }
     }
     let family = Family::read(path)?;
     let parent = path.parent().context("database needs a parent")?;
@@ -365,6 +375,17 @@ pub(crate) fn open_prepared<T>(
     }
 }
 
+/// Note the family again after this process closed a read connection on it, but only if the
+/// path still holds the same main file that was admitted: a replaced file is left to be
+/// validated by the next open.
+pub(crate) fn remember_same(cache: &mut AdmissionCache, path: &Path) -> Result<()> {
+    if let Some(known) = cache.get(path) {
+        if known.same_main(path)? {
+            remember(cache, path)?;
+        }
+    }
+    Ok(())
+}
 pub(crate) fn remember(cache: &mut AdmissionCache, path: &Path) -> Result<()> {
     // Retained handles establish identity across platforms; bound their number
     // when a daemon serves a large account registry.
@@ -416,7 +437,7 @@ mod tests {
     /// opened in place, twice when a copy was validated first.
     fn open(path: &Path, current: i64) -> Result<usize> {
         let runs = Cell::new(0);
-        let (db, ()) = open_prepared(path, None, current, |db| {
+        let (db, ()) = open_prepared(path, None, false, current, |db| {
             runs.set(runs.get() + 1);
             db.pragma_update(None, "user_version", current)?;
             Ok(())
@@ -469,7 +490,7 @@ mod tests {
         bytes[page..page + 64].fill(0xff);
         private(&path, &bytes);
         assert!(Family::read(&path).unwrap().settled(4).unwrap());
-        let error = open_prepared(&path, None, 4, |_| Ok(()))
+        let error = open_prepared(&path, None, false, 4, |_| Ok(()))
             .err()
             .unwrap()
             .to_string();
@@ -499,7 +520,7 @@ mod tests {
         fs::write(temp.path().join(format!("{SCRATCH}file")), b"").unwrap();
 
         // A refused open removes nothing.
-        assert!(open_prepared(&path, None, 4, |_| -> Result<()> {
+        assert!(open_prepared(&path, None, false, 4, |_| -> Result<()> {
             anyhow::bail!("refused")
         })
         .is_err());

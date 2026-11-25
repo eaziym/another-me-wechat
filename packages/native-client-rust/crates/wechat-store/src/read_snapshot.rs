@@ -43,9 +43,16 @@ impl Store {
             root: self.root.clone(),
             server_id: self.server_id.clone(),
             db: Mutex::new(db),
-            admitted: Mutex::new(Default::default()),
+            admitted: Default::default(),
             _lease: self._lease.clone(),
             snapshot: Some((account.into(), Mutex::new(control))),
+            reading: self.reading.clone(),
+            _reader: Some(Reader::open(
+                &self.reading,
+                account,
+                &self.admitted,
+                self.account_dir(account)?.join("agent/control.sqlite"),
+            )),
         })
     }
 

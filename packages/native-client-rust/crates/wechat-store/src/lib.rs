@@ -172,9 +172,59 @@ pub struct Store {
     pub root: PathBuf,
     pub server_id: String,
     db: Mutex<Connection>,
-    admitted: Mutex<admission::AdmissionCache>,
+    admitted: Arc<Mutex<admission::AdmissionCache>>,
     _lease: Arc<Lease>,
     snapshot: Option<(String, Mutex<Connection>)>,
+    /// How many read snapshots are open on each account's sidecar, shared with those snapshots.
+    reading: Arc<Mutex<std::collections::BTreeMap<String, usize>>>,
+    /// Set on a read snapshot; declared last so its connections close before the count drops.
+    _reader: Option<Reader>,
+}
+
+/// One open read snapshot of an account's sidecar, counted until it is dropped.
+pub(crate) struct Reader {
+    reading: Arc<Mutex<std::collections::BTreeMap<String, usize>>>,
+    account: String,
+    /// The store this snapshot was taken from, and the sidecar it read.
+    admitted: Arc<Mutex<admission::AdmissionCache>>,
+    path: PathBuf,
+}
+impl Reader {
+    pub(crate) fn open(
+        reading: &Arc<Mutex<std::collections::BTreeMap<String, usize>>>,
+        account: &str,
+        admitted: &Arc<Mutex<admission::AdmissionCache>>,
+        path: PathBuf,
+    ) -> Self {
+        if let Ok(mut counts) = reading.lock() {
+            *counts.entry(account.to_owned()).or_default() += 1;
+        }
+        Self {
+            reading: reading.clone(),
+            account: account.to_owned(),
+            admitted: admitted.clone(),
+            path,
+        }
+    }
+}
+impl Drop for Reader {
+    fn drop(&mut self) {
+        // Closing our own read connection touches the write-ahead log's index. Note the family
+        // as it now stands, so the next open does not take that for someone else's change and
+        // validate a copy of the whole store. Skipped when an operation holds the cache: that
+        // operation notes the family itself when it ends.
+        if let Ok(mut cache) = self.admitted.try_lock() {
+            let _ = admission::remember_same(&mut cache, &self.path);
+        }
+        if let Ok(mut counts) = self.reading.lock() {
+            if let Some(count) = counts.get_mut(&self.account) {
+                *count = count.saturating_sub(1);
+                if *count == 0 {
+                    counts.remove(&self.account);
+                }
+            }
+        }
+    }
 }
 
 impl Store {
@@ -205,16 +255,18 @@ impl Store {
             bail!("registry must be an owner-only regular file");
         }
         let (db, server_id) =
-            admission::open_prepared(&db_path, None, REGISTRY_SCHEMA_VERSION, |db| {
+            admission::open_prepared(&db_path, None, false, REGISTRY_SCHEMA_VERSION, |db| {
                 Self::prepare_registry(db, initialize)
             })?;
         Ok(Self {
             root,
             server_id,
             db: Mutex::new(db),
-            admitted: Mutex::new(Default::default()),
+            admitted: Default::default(),
             _lease: Arc::new(lease),
             snapshot: None,
+            reading: Default::default(),
+            _reader: None,
         })
     }
     fn prepare_registry(db: &mut Connection, initialize: bool) -> Result<String> {
