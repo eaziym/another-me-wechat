@@ -14,6 +14,10 @@ pub(super) fn advertised_length(plan: &DownloadPlan) -> Option<u64> {
     }
 }
 pub(super) fn allowed(asset: &MediaAsset, limit: u64) -> bool {
+    // Items of a forwarded chat record are fetched only when asked for.
+    if asset.record_item.is_some() {
+        return false;
+    }
     if matches!(
         asset.kind,
         MediaKind::Image | MediaKind::Video | MediaKind::Sticker
@@ -48,8 +52,21 @@ struct PendingMedia {
 
 impl Core {
     pub(crate) fn queue_received_media(&self, account: &str, message: &str) -> Result<()> {
-        let assets = match self.media_assets(account, message) {
-            Ok(assets) => assets,
+        let listed = (|| {
+            let reader = self.profile_reader_owned(account)?;
+            let own = self.profile_username(account)?;
+            let msg = reader.message(&crate::source_message_id(message)?, own.as_deref())?;
+            // A forwarded record's items are never downloaded on receipt; their
+            // rows are created when someone lists the record's media.
+            if crate::quotes::forwarded_media(&msg).is_some() {
+                return Ok(None);
+            }
+            self.media_assets_with_reader(account, message, &reader)
+                .map(Some)
+        })();
+        let assets = match listed {
+            Ok(None) => return Ok(()),
+            Ok(Some(assets)) => assets,
             Err(error) => {
                 if error.to_string() != "unsupported_application_media" {
                     self.store.append_event_once(

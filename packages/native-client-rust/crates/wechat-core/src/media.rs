@@ -954,30 +954,11 @@ impl Core {
             .text
             .as_deref()
             .context("media_metadata_unavailable")?;
-        let mut quoted = msg.clone();
-        let plans = if let Some((link, direct)) = message_card(&msg) {
-            card_plans(link, direct)
-        } else if let Some(content) = crate::quotes::quoted_image_content(&msg) {
-            quoted.message_type = 3;
-            discover(&quoted, &content)?
-        } else if let Some((kind, content)) = crate::quotes::quoted_sticker_content(&msg) {
-            quoted.message_type = i64::from(kind);
-            quoted.local_type = kind.to_string();
-            discover(&quoted, &content)?
-        } else {
-            discover(&msg, content)?
-        };
+        let (plans, _) = message_plans(&msg, content)?;
 
         let mut assets = vec![];
-        for (_, variant, _, _) in plans {
-            let hash = digest(&serde_json::to_vec(&(
-                "bound-source-v1",
-                account,
-                &binding,
-                variant,
-                content,
-            ))?);
-            let id = format!("asset_{}", &hash[..40]);
+        for ((_, variant, _, _), item) in plans {
+            let id = bound_asset_id(account, &binding, variant, content, item)?;
             let Some(row) = rows.iter().find(|row| row.id == id) else {
                 return Ok(None);
             };
@@ -1013,7 +994,7 @@ impl Core {
             })
             .collect())
     }
-    fn media_assets_with_reader(
+    pub(crate) fn media_assets_with_reader(
         &self,
         account: &str,
         message_id: &str,
@@ -1043,27 +1024,7 @@ impl Core {
             .text
             .as_deref()
             .context("media_metadata_unavailable")?;
-        let quoted_image = crate::quotes::quoted_image_content(&msg);
-        let quoted_sticker = crate::quotes::quoted_sticker_content(&msg);
-        let link = message_card(&msg);
-        let sidecar_only = quoted_image.is_some()
-            || quoted_sticker.is_some()
-            || link.is_some()
-            || crate::quotes::message_app(&msg).is_some_and(|app| app.sticker.is_some());
-        let mut quoted = msg.clone();
-        let mut plans = if let Some((link, direct)) = link {
-            card_plans(link, direct)
-        } else if let Some(content) = &quoted_image {
-            quoted.message_type = 3;
-            discover(&quoted, content)?
-        } else if let Some((kind, content)) = &quoted_sticker {
-            quoted.message_type = i64::from(*kind);
-            // Embedded subtype belongs to the quote, not the outer reply.
-            quoted.local_type = kind.to_string();
-            discover(&quoted, content)?
-        } else {
-            discover(&msg, content)?
-        };
+        let (mut plans, sidecar_only) = message_plans(&msg, content)?;
         if msg.message_type == 34 {
             if let Some(server) = &msg.server_message_id {
                 // A plan keeps encoded audio only from a retained sync batch,
@@ -1074,7 +1035,7 @@ impl Core {
                 } else {
                     self.native_inline(account, &msg)?
                 };
-                for (_, _, plan, _) in &mut plans {
+                for ((_, _, plan, _), _) in &mut plans {
                     if let DownloadPlan::Voice {
                         server_id,
                         inline: target,
@@ -1092,15 +1053,8 @@ impl Core {
             .account_settings(account)?
             .auto_download_max_bytes;
         let mut out = vec![];
-        for (kind, variant, plan, filename) in plans {
-            let identity = digest(&serde_json::to_vec(&(
-                "bound-source-v1",
-                account,
-                &binding,
-                variant,
-                content,
-            ))?);
-            let id = format!("asset_{}", &identity[..40]);
+        for ((kind, variant, plan, filename), record_item) in plans {
+            let id = bound_asset_id(account, &binding, variant, content, record_item)?;
             let expires = match &plan {
                 DownloadPlan::Cdn { descriptor } => descriptor.expires_at,
                 DownloadPlan::Sticker { descriptor } => descriptor.expires_at,
@@ -1130,6 +1084,7 @@ impl Core {
                     auto_download_allowed: None,
                     sha256: None,
                     filename,
+                    record_item,
                     expires_at: expires,
                     reason: None,
                     retryable: true,
@@ -1201,7 +1156,12 @@ impl Core {
                     )?;
                 }
             }
-            if asset.state != "available" && matches!(kind, MediaKind::File | MediaKind::Video) {
+            // Record items are looked up only when asked for, so listing a
+            // record that repeats a large cached file copies nothing.
+            if asset.state != "available"
+                && record_item.is_none()
+                && matches!(kind, MediaKind::File | MediaKind::Video)
+            {
                 if let DownloadPlan::Cdn { descriptor } = &plan {
                     if let Some(md5) = descriptor.expected_md5.as_deref() {
                         let cache_kind = if kind == MediaKind::File {
@@ -1343,6 +1303,11 @@ impl Core {
                 .find(|a| &a.id == id)
                 .context("media_asset_not_found")?
         } else {
+            // Several record items share a quality; only the asset ID names one.
+            ensure!(
+                assets.iter().all(|a| a.record_item.is_none()),
+                "media_asset_required"
+            );
             select_asset(assets, request.quality)?
         };
         ensure!(
@@ -1955,7 +1920,11 @@ impl Core {
                 // Persisted plans from older releases also marked normal videos
                 // strict. The transport still verifies a selected representation
                 // against the CDN response digest before returning any bytes.
-                if asset.kind == MediaKind::Video && asset.variant == MediaVariant::Normal {
+                // A record item's advertised size and MD5 name its one full copy.
+                if asset.kind == MediaKind::Video
+                    && asset.variant == MediaVariant::Normal
+                    && asset.record_item.is_none()
+                {
                     descriptor.strict_size = false;
                 }
                 let mut state = self.account_state(account)?;
@@ -2920,6 +2889,194 @@ fn validate_media_bytes(kind: MediaKind, bytes: &[u8]) -> Result<(String, Option
 }
 
 type DiscoveredMedia = (MediaKind, MediaVariant, DownloadPlan, Option<String>);
+/// A copy to list, with its item number when it is inside a forwarded chat record.
+type PlannedMedia = (DiscoveredMedia, Option<u32>);
+
+/// A message's media copies, and whether they stay in the sidecar only: quoted
+/// pictures and stickers, link cards and forwarded-record items are never
+/// written into the official profile's media folders.
+fn message_plans(
+    msg: &wechat_profile::Message,
+    content: &str,
+) -> Result<(Vec<PlannedMedia>, bool)> {
+    let plain = |plans: Vec<DiscoveredMedia>| plans.into_iter().map(|plan| (plan, None)).collect();
+    if let Some((link, direct)) = message_card(msg) {
+        return Ok((plain(card_plans(link, direct)), true));
+    }
+    let mut quoted = msg.clone();
+    if let Some(content) = crate::quotes::quoted_image_content(msg) {
+        quoted.message_type = 3;
+        return Ok((plain(discover(&quoted, &content)?), true));
+    }
+    if let Some((kind, content)) = crate::quotes::quoted_sticker_content(msg) {
+        quoted.message_type = i64::from(kind);
+        // Embedded subtype belongs to the quote, not the outer reply.
+        quoted.local_type = kind.to_string();
+        return Ok((plain(discover(&quoted, &content)?), true));
+    }
+    if let Some(items) = crate::quotes::forwarded_media(msg) {
+        ensure!(!items.is_empty(), "unsupported_application_media");
+        return Ok((record_plans(items)?, true));
+    }
+    let sticker = crate::quotes::message_app(msg).is_some_and(|app| app.sticker.is_some());
+    Ok((plain(discover(msg, content)?), sticker))
+}
+
+/// The asset ID binds the source row, variant and whole message content; a
+/// forwarded-record item also binds its number, so items do not collide.
+fn bound_asset_id(
+    account: &str,
+    binding: &impl Serialize,
+    variant: MediaVariant,
+    content: &str,
+    record_item: Option<u32>,
+) -> Result<String> {
+    let source = ("bound-source-v1", account, binding, variant, content);
+    let identity = match record_item {
+        None => digest(&serde_json::to_vec(&source)?),
+        Some(item) => digest(&serde_json::to_vec(&(source, ("record-item", item)))?),
+    };
+    Ok(format!("asset_{}", &identity[..40]))
+}
+
+/// Download plans for the pictures, videos and files of a forwarded chat
+/// record: each item's full copy (`cdndataurl`, `cdndatakey`, `datasize`,
+/// `fullmd5`) uses the same CDN transfer, size and MD5 checks as a photo,
+/// video or file message.
+fn record_plans(items: Vec<crate::forwarded::RecordMedia>) -> Result<Vec<PlannedMedia>> {
+    use crate::forwarded::RecordMediaKind as Item;
+    let number = |v: Option<&str>| {
+        v.filter(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()))
+            .and_then(|v| v.parse::<u64>().ok())
+    };
+    let mut out = vec![];
+    for item in items {
+        let (kind, variant) = match item.kind {
+            Item::Image => (MediaKind::Image, MediaVariant::Original),
+            Item::Video => (MediaKind::Video, MediaVariant::Normal),
+            Item::File => (MediaKind::File, MediaVariant::Original),
+        };
+        let size = number(item.data_size.as_deref());
+        let (quality, filename) = match item.kind {
+            Item::Image => (MediaQuality::Original, None),
+            Item::Video => (MediaQuality::Video, Some("video.mp4".into())),
+            Item::File => (
+                file_upload_quality(usize::try_from(size.unwrap_or(0))?),
+                item.title.clone().filter(|s| {
+                    s.len() <= 255 && !s.contains(['/', '\\']) && !s.chars().any(|c| c.is_control())
+                }),
+            ),
+        };
+        let descriptor = MediaDescriptor {
+            file_id: item.data_url.clone(),
+            aes_key: hex_decode(&item.data_key)?,
+            quality,
+            expected_bytes: size,
+            expected_md5: item.data_md5.clone(),
+            strict_size: true,
+            expires_at: None,
+        };
+        let plan = DownloadPlan::Cdn { descriptor };
+        out.push(((kind, variant, plan, filename), Some(item.number)));
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod record_plan_tests {
+    use super::*;
+
+    #[test]
+    fn record_items_list_their_full_copies_under_distinct_ids() {
+        let key = "0123456789abcdef0123456789abcdef";
+        let copy = |url: &str| {
+            format!("<cdndataurl>{url}</cdndataurl><cdndatakey>{key}</cdndatakey><datasize>1234</datasize><fullmd5>00112233445566778899aabbccddeeff</fullmd5><cdnthumburl>{url}-thumb</cdnthumburl><cdnthumbkey>{key}</cdnthumbkey><thumbsize>56</thumbsize>")
+        };
+        let record = format!("<recordinfo><datalist><dataitem datatype='2'>{}</dataitem><dataitem datatype='4'>{}</dataitem><dataitem datatype='8'><datatitle>a/b.pdf</datatitle>{}</dataitem></datalist></recordinfo>", copy("image"), copy("video"), copy("file"));
+        let xml = format!("<msg><appmsg><title>t</title><type>19</type><recorditem><![CDATA[{record}]]></recorditem></appmsg></msg>");
+        let plans = record_plans(crate::forwarded::media(&xml).unwrap()).unwrap();
+        let shape: Vec<_> = plans
+            .iter()
+            .map(|((kind, variant, plan, filename), item)| {
+                let DownloadPlan::Cdn { descriptor } = plan else {
+                    panic!("record items use CDN transfers")
+                };
+                (
+                    *kind,
+                    *variant,
+                    descriptor.file_id.clone(),
+                    descriptor.quality,
+                    descriptor.expected_bytes,
+                    descriptor.expected_md5.is_some(),
+                    descriptor.strict_size,
+                    filename.clone(),
+                    *item,
+                )
+            })
+            .collect();
+        let (image, video, file) = (
+            MediaQuality::Original,
+            MediaQuality::Video,
+            MediaQuality::File,
+        );
+        assert_eq!(
+            shape,
+            [
+                (
+                    MediaKind::Image,
+                    MediaVariant::Original,
+                    "image".into(),
+                    image,
+                    Some(1234),
+                    true,
+                    true,
+                    None,
+                    Some(1)
+                ),
+                (
+                    MediaKind::Video,
+                    MediaVariant::Normal,
+                    "video".into(),
+                    video,
+                    Some(1234),
+                    true,
+                    true,
+                    Some("video.mp4".into()),
+                    Some(2)
+                ),
+                // A file name with a path separator is not used.
+                (
+                    MediaKind::File,
+                    MediaVariant::Original,
+                    "file".into(),
+                    file,
+                    Some(1234),
+                    true,
+                    true,
+                    None,
+                    Some(3)
+                ),
+            ]
+        );
+        let id = |item| {
+            bound_asset_id("account", &"binding", MediaVariant::Original, &xml, item).unwrap()
+        };
+        assert_ne!(id(Some(1)), id(Some(2)));
+        assert_ne!(id(Some(1)), id(None));
+        // Ordinary attachments keep the IDs earlier builds gave them.
+        let legacy = digest(
+            &serde_json::to_vec(&(
+                "bound-source-v1",
+                "account",
+                "binding",
+                MediaVariant::Original,
+                xml.as_str(),
+            ))
+            .unwrap(),
+        );
+        assert_eq!(id(None), format!("asset_{}", &legacy[..40]));
+    }
+}
 fn discover(msg: &wechat_profile::Message, content: &str) -> Result<Vec<DiscoveredMedia>> {
     ensure!(content.len() <= 1024 * 1024, "media_metadata_limit");
     let mut xml = content.trim_start();
@@ -6120,6 +6277,7 @@ mod tests {
             auto_download_allowed: None,
             sha256: None,
             filename: Some("report.txt".into()),
+            record_item: None,
             expires_at: Some(1),
             reason: None,
             retryable: true,

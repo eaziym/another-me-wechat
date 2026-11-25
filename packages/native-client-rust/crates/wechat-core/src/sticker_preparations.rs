@@ -237,6 +237,7 @@ impl Core {
                 "{id}.{}",
                 if role == "original" { "gif" } else { "png" }
             )),
+            record_item: None,
             expires_at: None,
             reason: None,
             retryable: false,

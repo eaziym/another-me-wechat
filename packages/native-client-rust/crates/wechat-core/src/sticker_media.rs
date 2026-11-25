@@ -101,6 +101,7 @@ impl Core {
             auto_download_allowed: Some(false),
             sha256: None,
             filename: None,
+            record_item: None,
             expires_at: None,
             reason: None,
             retryable: true,

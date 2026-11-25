@@ -293,6 +293,7 @@ response CustomSticker.original.preview.filename | string, required | File name 
 response CustomSticker.original.preview.sha256 | string, required | SHA-256 of the preview bytes, as lowercase hex.
 response CustomSticker.original.preview.sourceSha256 | string, required | SHA-256 of the original image bytes this preview was made from.
 response CustomSticker.original.reason | string, required, nullable | Machine-readable code explaining the state, such as `media_expired`. Null when there is nothing to explain.
+response CustomSticker.original.recordItem | integer, nullable, min 0, format uint32 | For a picture, video or file inside a forwarded chat record, its number in the record's text, where it shows as `[image item=N]`. Items of nested records share one numbering. Omitted for an ordinary attachment.
 response CustomSticker.original.retryable | boolean, required | True when asking for the download again can still succeed.
 response CustomSticker.original.sha256 | string, required, nullable | SHA-256 of the cached bytes, as lowercase hex. Null until they are cached.
 response CustomSticker.original.state | string, required | `pending` (not downloaded yet), `available` (downloaded and checked), `expired` (WeChat no longer has it) or `unsupported`.
@@ -327,6 +328,7 @@ response CustomStickerList.items[].original.preview.filename | string, required 
 response CustomStickerList.items[].original.preview.sha256 | string, required | SHA-256 of the preview bytes, as lowercase hex.
 response CustomStickerList.items[].original.preview.sourceSha256 | string, required | SHA-256 of the original image bytes this preview was made from.
 response CustomStickerList.items[].original.reason | string, required, nullable | Machine-readable code explaining the state, such as `media_expired`. Null when there is nothing to explain.
+response CustomStickerList.items[].original.recordItem | integer, nullable, min 0, format uint32 | For a picture, video or file inside a forwarded chat record, its number in the record's text, where it shows as `[image item=N]`. Items of nested records share one numbering. Omitted for an ordinary attachment.
 response CustomStickerList.items[].original.retryable | boolean, required | True when asking for the download again can still succeed.
 response CustomStickerList.items[].original.sha256 | string, required, nullable | SHA-256 of the cached bytes, as lowercase hex. Null until they are cached.
 response CustomStickerList.items[].original.state | string, required | `pending` (not downloaded yet), `available` (downloaded and checked), `expired` (WeChat no longer has it) or `unsupported`.
@@ -356,6 +358,7 @@ response MediaAsset.preview.filename | string, required | File name of the previ
 response MediaAsset.preview.sha256 | string, required | SHA-256 of the preview bytes, as lowercase hex.
 response MediaAsset.preview.sourceSha256 | string, required | SHA-256 of the original image bytes this preview was made from.
 response MediaAsset.reason | string, required, nullable | Machine-readable code explaining the state, such as `media_expired`. Null when there is nothing to explain.
+response MediaAsset.recordItem | integer, nullable, min 0, format uint32 | For a picture, video or file inside a forwarded chat record, its number in the record's text, where it shows as `[image item=N]`. Items of nested records share one numbering. Omitted for an ordinary attachment.
 response MediaAsset.retryable | boolean, required | True when asking for the download again can still succeed.
 response MediaAsset.sha256 | string, required, nullable | SHA-256 of the cached bytes, as lowercase hex. Null until they are cached.
 response MediaAsset.state | string, required | `pending` (not downloaded yet), `available` (downloaded and checked), `expired` (WeChat no longer has it) or `unsupported`.
@@ -704,6 +707,7 @@ response NativeMediaBatch.items[].assets[].preview.filename | string, required |
 response NativeMediaBatch.items[].assets[].preview.sha256 | string, required | SHA-256 of the preview bytes, as lowercase hex.
 response NativeMediaBatch.items[].assets[].preview.sourceSha256 | string, required | SHA-256 of the original image bytes this preview was made from.
 response NativeMediaBatch.items[].assets[].reason | string, required, nullable | Machine-readable code explaining the state, such as `media_expired`. Null when there is nothing to explain.
+response NativeMediaBatch.items[].assets[].recordItem | integer, nullable, min 0, format uint32 | For a picture, video or file inside a forwarded chat record, its number in the record's text, where it shows as `[image item=N]`. Items of nested records share one numbering. Omitted for an ordinary attachment.
 response NativeMediaBatch.items[].assets[].retryable | boolean, required | True when asking for the download again can still succeed.
 response NativeMediaBatch.items[].assets[].sha256 | string, required, nullable | SHA-256 of the cached bytes, as lowercase hex. Null until they are cached.
 response NativeMediaBatch.items[].assets[].state | string, required | `pending` (not downloaded yet), `available` (downloaded and checked), `expired` (WeChat no longer has it) or `unsupported`.
@@ -1000,6 +1004,7 @@ response StickerPack.cover.preview.filename | string, required | File name of th
 response StickerPack.cover.preview.sha256 | string, required | SHA-256 of the preview bytes, as lowercase hex.
 response StickerPack.cover.preview.sourceSha256 | string, required | SHA-256 of the original image bytes this preview was made from.
 response StickerPack.cover.reason | string, required, nullable | Machine-readable code explaining the state, such as `media_expired`. Null when there is nothing to explain.
+response StickerPack.cover.recordItem | integer, nullable, min 0, format uint32 | For a picture, video or file inside a forwarded chat record, its number in the record's text, where it shows as `[image item=N]`. Items of nested records share one numbering. Omitted for an ordinary attachment.
 response StickerPack.cover.retryable | boolean, required | True when asking for the download again can still succeed.
 response StickerPack.cover.sha256 | string, required, nullable | SHA-256 of the cached bytes, as lowercase hex. Null until they are cached.
 response StickerPack.cover.state | string, required | `pending` (not downloaded yet), `available` (downloaded and checked), `expired` (WeChat no longer has it) or `unsupported`.
@@ -1030,6 +1035,7 @@ response StickerPack.icon.preview.filename | string, required | File name of the
 response StickerPack.icon.preview.sha256 | string, required | SHA-256 of the preview bytes, as lowercase hex.
 response StickerPack.icon.preview.sourceSha256 | string, required | SHA-256 of the original image bytes this preview was made from.
 response StickerPack.icon.reason | string, required, nullable | Machine-readable code explaining the state, such as `media_expired`. Null when there is nothing to explain.
+response StickerPack.icon.recordItem | integer, nullable, min 0, format uint32 | For a picture, video or file inside a forwarded chat record, its number in the record's text, where it shows as `[image item=N]`. Items of nested records share one numbering. Omitted for an ordinary attachment.
 response StickerPack.icon.retryable | boolean, required | True when asking for the download again can still succeed.
 response StickerPack.icon.sha256 | string, required, nullable | SHA-256 of the cached bytes, as lowercase hex. Null until they are cached.
 response StickerPack.icon.state | string, required | `pending` (not downloaded yet), `available` (downloaded and checked), `expired` (WeChat no longer has it) or `unsupported`.
@@ -1067,6 +1073,7 @@ response StickerPackList.items[].cover.preview.filename | string, required | Fil
 response StickerPackList.items[].cover.preview.sha256 | string, required | SHA-256 of the preview bytes, as lowercase hex.
 response StickerPackList.items[].cover.preview.sourceSha256 | string, required | SHA-256 of the original image bytes this preview was made from.
 response StickerPackList.items[].cover.reason | string, required, nullable | Machine-readable code explaining the state, such as `media_expired`. Null when there is nothing to explain.
+response StickerPackList.items[].cover.recordItem | integer, nullable, min 0, format uint32 | For a picture, video or file inside a forwarded chat record, its number in the record's text, where it shows as `[image item=N]`. Items of nested records share one numbering. Omitted for an ordinary attachment.
 response StickerPackList.items[].cover.retryable | boolean, required | True when asking for the download again can still succeed.
 response StickerPackList.items[].cover.sha256 | string, required, nullable | SHA-256 of the cached bytes, as lowercase hex. Null until they are cached.
 response StickerPackList.items[].cover.state | string, required | `pending` (not downloaded yet), `available` (downloaded and checked), `expired` (WeChat no longer has it) or `unsupported`.
@@ -1097,6 +1104,7 @@ response StickerPackList.items[].icon.preview.filename | string, required | File
 response StickerPackList.items[].icon.preview.sha256 | string, required | SHA-256 of the preview bytes, as lowercase hex.
 response StickerPackList.items[].icon.preview.sourceSha256 | string, required | SHA-256 of the original image bytes this preview was made from.
 response StickerPackList.items[].icon.reason | string, required, nullable | Machine-readable code explaining the state, such as `media_expired`. Null when there is nothing to explain.
+response StickerPackList.items[].icon.recordItem | integer, nullable, min 0, format uint32 | For a picture, video or file inside a forwarded chat record, its number in the record's text, where it shows as `[image item=N]`. Items of nested records share one numbering. Omitted for an ordinary attachment.
 response StickerPackList.items[].icon.retryable | boolean, required | True when asking for the download again can still succeed.
 response StickerPackList.items[].icon.sha256 | string, required, nullable | SHA-256 of the cached bytes, as lowercase hex. Null until they are cached.
 response StickerPackList.items[].icon.state | string, required | `pending` (not downloaded yet), `available` (downloaded and checked), `expired` (WeChat no longer has it) or `unsupported`.
@@ -1135,6 +1143,7 @@ response StickerPackSticker.original.preview.filename | string, required | File 
 response StickerPackSticker.original.preview.sha256 | string, required | SHA-256 of the preview bytes, as lowercase hex.
 response StickerPackSticker.original.preview.sourceSha256 | string, required | SHA-256 of the original image bytes this preview was made from.
 response StickerPackSticker.original.reason | string, required, nullable | Machine-readable code explaining the state, such as `media_expired`. Null when there is nothing to explain.
+response StickerPackSticker.original.recordItem | integer, nullable, min 0, format uint32 | For a picture, video or file inside a forwarded chat record, its number in the record's text, where it shows as `[image item=N]`. Items of nested records share one numbering. Omitted for an ordinary attachment.
 response StickerPackSticker.original.retryable | boolean, required | True when asking for the download again can still succeed.
 response StickerPackSticker.original.sha256 | string, required, nullable | SHA-256 of the cached bytes, as lowercase hex. Null until they are cached.
 response StickerPackSticker.original.state | string, required | `pending` (not downloaded yet), `available` (downloaded and checked), `expired` (WeChat no longer has it) or `unsupported`.
@@ -1164,6 +1173,7 @@ response StickerPackSticker.thumbnail.preview.filename | string, required | File
 response StickerPackSticker.thumbnail.preview.sha256 | string, required | SHA-256 of the preview bytes, as lowercase hex.
 response StickerPackSticker.thumbnail.preview.sourceSha256 | string, required | SHA-256 of the original image bytes this preview was made from.
 response StickerPackSticker.thumbnail.reason | string, required, nullable | Machine-readable code explaining the state, such as `media_expired`. Null when there is nothing to explain.
+response StickerPackSticker.thumbnail.recordItem | integer, nullable, min 0, format uint32 | For a picture, video or file inside a forwarded chat record, its number in the record's text, where it shows as `[image item=N]`. Items of nested records share one numbering. Omitted for an ordinary attachment.
 response StickerPackSticker.thumbnail.retryable | boolean, required | True when asking for the download again can still succeed.
 response StickerPackSticker.thumbnail.sha256 | string, required, nullable | SHA-256 of the cached bytes, as lowercase hex. Null until they are cached.
 response StickerPackSticker.thumbnail.state | string, required | `pending` (not downloaded yet), `available` (downloaded and checked), `expired` (WeChat no longer has it) or `unsupported`.
@@ -1199,6 +1209,7 @@ response StickerPackStickers.items[].original.preview.filename | string, require
 response StickerPackStickers.items[].original.preview.sha256 | string, required | SHA-256 of the preview bytes, as lowercase hex.
 response StickerPackStickers.items[].original.preview.sourceSha256 | string, required | SHA-256 of the original image bytes this preview was made from.
 response StickerPackStickers.items[].original.reason | string, required, nullable | Machine-readable code explaining the state, such as `media_expired`. Null when there is nothing to explain.
+response StickerPackStickers.items[].original.recordItem | integer, nullable, min 0, format uint32 | For a picture, video or file inside a forwarded chat record, its number in the record's text, where it shows as `[image item=N]`. Items of nested records share one numbering. Omitted for an ordinary attachment.
 response StickerPackStickers.items[].original.retryable | boolean, required | True when asking for the download again can still succeed.
 response StickerPackStickers.items[].original.sha256 | string, required, nullable | SHA-256 of the cached bytes, as lowercase hex. Null until they are cached.
 response StickerPackStickers.items[].original.state | string, required | `pending` (not downloaded yet), `available` (downloaded and checked), `expired` (WeChat no longer has it) or `unsupported`.
@@ -1228,6 +1239,7 @@ response StickerPackStickers.items[].thumbnail.preview.filename | string, requir
 response StickerPackStickers.items[].thumbnail.preview.sha256 | string, required | SHA-256 of the preview bytes, as lowercase hex.
 response StickerPackStickers.items[].thumbnail.preview.sourceSha256 | string, required | SHA-256 of the original image bytes this preview was made from.
 response StickerPackStickers.items[].thumbnail.reason | string, required, nullable | Machine-readable code explaining the state, such as `media_expired`. Null when there is nothing to explain.
+response StickerPackStickers.items[].thumbnail.recordItem | integer, nullable, min 0, format uint32 | For a picture, video or file inside a forwarded chat record, its number in the record's text, where it shows as `[image item=N]`. Items of nested records share one numbering. Omitted for an ordinary attachment.
 response StickerPackStickers.items[].thumbnail.retryable | boolean, required | True when asking for the download again can still succeed.
 response StickerPackStickers.items[].thumbnail.sha256 | string, required, nullable | SHA-256 of the cached bytes, as lowercase hex. Null until they are cached.
 response StickerPackStickers.items[].thumbnail.state | string, required | `pending` (not downloaded yet), `available` (downloaded and checked), `expired` (WeChat no longer has it) or `unsupported`.

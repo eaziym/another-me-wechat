@@ -70,7 +70,17 @@ Ordinary stickers (type 47) and supported shared stickers (application subtype 8
 
 ## Forwarded chats
 
-A forwarded chat bundle becomes plain text: each sender and message, with nested bundles indented. Images and files inside the bundle appear as placeholders and aren't downloaded.
+A forwarded chat bundle becomes plain text: each sender and message, with nested bundles indented. Pictures, videos and files inside it, nested bundles included, are numbered in that text:
+
+```text
+[Chat History] Group chat history
+Ana: [image item=1]
+Ben: [Chat History] Chat history of Ben
+  Ben: [video item=2]
+Ana: [file item=3] report.pdf
+```
+
+To fetch one, list the bundle message's media (`GET /v1/accounts/{account}/messages/{id}/media`), pick the asset whose `recordItem` is that number, and request it by its `assetId` with `POST .../media-transfers`. A transfer without `assetId` is refused with `media_asset_required`, because several items share a quality. Items are downloaded only on request, never automatically, and only their full copies are offered. Items without a downloadable copy keep a plain `[media]` placeholder.
 
 ## Link cards
 

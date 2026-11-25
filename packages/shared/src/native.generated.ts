@@ -2431,6 +2431,12 @@ sha256: string | null,
  */
 filename: string | null,
 /**
+ * For a picture, video or file inside a forwarded chat record, its number in the record's
+ * text, where it shows as `[image item=N]`. Items of nested records share one numbering.
+ * Omitted for an ordinary attachment.
+ */
+recordItem?: number,
+/**
  * When WeChat's copy expires, as Unix time in seconds. Null when WeChat gave no expiry.
  */
 expiresAt: number | null,

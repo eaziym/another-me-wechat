@@ -1452,6 +1452,15 @@
               "null"
             ]
           },
+          "recordItem": {
+            "description": "For a picture, video or file inside a forwarded chat record, its number in the record's\ntext, where it shows as `[image item=N]`. Items of nested records share one numbering.\nOmitted for an ordinary attachment.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "retryable": {
             "description": "True when asking for the download again can still succeed.",
             "type": "boolean"

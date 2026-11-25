@@ -349,6 +349,11 @@ impl From<anyhow::Error> for ApiError {
                 "media_asset_not_found",
             ),
             (
+                "media_asset_required",
+                StatusCode::BAD_REQUEST,
+                "media_asset_required",
+            ),
+            (
                 "media_not_cached",
                 StatusCode::NOT_FOUND,
                 "media_not_cached",

@@ -272,6 +272,7 @@ impl Core {
             auto_download_allowed: Some(false),
             sha256: Some(digest(bytes)),
             filename: Some(filename.into()),
+            record_item: None,
             expires_at: None,
             reason: None,
             retryable: false,

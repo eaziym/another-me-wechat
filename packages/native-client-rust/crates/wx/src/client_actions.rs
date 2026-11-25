@@ -853,6 +853,13 @@ pub async fn media(
         .get(&r.path(&format!("messages/{}/media", encode(message)))?)
         .await?;
     let items = list["items"].as_array().context("invalid media catalog")?;
+    // Several items of a forwarded chat record share a quality, so this
+    // command cannot tell which one is wanted.
+    anyhow::ensure!(
+        items.iter().all(|a| a["recordItem"].is_null()),
+        "this message is a forwarded chat record; fetch one of its items by asset ID \
+         (GET .../messages/{{id}}/media lists each item's recordItem and id)"
+    );
     let mut candidates = items
         .iter()
         .filter(|a| {

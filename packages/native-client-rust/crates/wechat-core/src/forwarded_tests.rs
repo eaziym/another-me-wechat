@@ -261,3 +261,110 @@ fn total_xml_parse_budget_is_bounded() {
     assert!(renderer.output.ends_with(TRUNCATED));
     assert!(parse(&" ".repeat(MAX_XML_BYTES + 1)).is_none());
 }
+
+const KEY_A: &str = "0123456789abcdef0123456789abcdef";
+const KEY_B: &str = "fedcba9876543210fedcba9876543210";
+
+fn media_item(datatype: u8, sender: &str, extra: &str) -> String {
+    format!("<dataitem datatype='{datatype}'><sourcename>{sender}</sourcename>{extra}</dataitem>")
+}
+
+fn full_copy(url: &str) -> String {
+    format!("<cdndataurl>{url}</cdndataurl><cdndatakey>{KEY_A}</cdndatakey><datasize>1234</datasize><fullmd5>00112233445566778899aabbccddeeff</fullmd5><cdnthumburl>{url}-thumb</cdnthumburl><cdnthumbkey>{KEY_B}</cdnthumbkey><thumbsize>56</thumbsize>")
+}
+
+#[test]
+fn record_media_items_are_numbered_across_nested_records_in_text_order() {
+    let inner = record(
+        &(media_item(2, "Inner", &full_copy("inner-image"))
+            + &media_item(4, "Inner", &full_copy("inner-video"))),
+    );
+    let items = media_item(2, "Outer", &full_copy("outer-image"))
+        + &nested(&inner, true)
+        + &media_item(
+            8,
+            "Outer",
+            &format!("<datatitle>report.pdf</datatitle>{}", full_copy("outer-file")),
+        )
+        // No CDN copy, a malformed key, or only a thumbnail: not fetchable.
+        + &media_item(2, "Outer", "<datadesc>[Photo]</datadesc>")
+        + &media_item(2, "Outer", "<cdndataurl>bad</cdndataurl><cdndatakey>not-hex</cdndatakey>")
+        + &media_item(8, "Outer", &format!("<datatitle>thumb.pdf</datatitle><cdnthumburl>t</cdnthumburl><cdnthumbkey>{KEY_B}</cdnthumbkey>"))
+        + &media_item(4, "Outer", &format!("<datadesc>[Video]</datadesc><cdnthumburl>t</cdnthumburl><cdnthumbkey>{KEY_B}</cdnthumbkey>"));
+    let xml = outer(&record(&items));
+    assert_eq!(
+        render(&xml).unwrap(),
+        "[Chat History] Fixture\nOuter: [image item=1]\nForwarder: [Chat History] Nested history\n  Inner: [image item=2]\n  Inner: [video item=3]\nOuter: [file item=4] report.pdf\nOuter: [Photo]\nOuter: [media]\nOuter: thumb.pdf\nOuter: [Video]"
+    );
+    let media = media(&xml).unwrap();
+    let summary: Vec<_> = media
+        .iter()
+        .map(|m| (m.number, m.kind, m.data_url.as_str()))
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            (1, RecordMediaKind::Image, "outer-image"),
+            (2, RecordMediaKind::Image, "inner-image"),
+            (3, RecordMediaKind::Video, "inner-video"),
+            (4, RecordMediaKind::File, "outer-file"),
+        ]
+    );
+    assert_eq!(media[3].title.as_deref(), Some("report.pdf"));
+    assert_eq!(media[0].data_key, KEY_A);
+    assert_eq!(media[0].data_size.as_deref(), Some("1234"));
+    assert_eq!(
+        media[0].data_md5.as_deref(),
+        Some("00112233445566778899aabbccddeeff")
+    );
+}
+
+#[test]
+fn record_media_is_empty_for_a_title_fallback_and_absent_for_other_messages() {
+    assert_eq!(media(&outer("<recordinfo/>")).unwrap(), vec![]);
+    assert!(media("<msg><appmsg><type>6</type></appmsg></msg>").is_none());
+}
+
+#[test]
+fn record_media_skips_zero_size_copies_and_labels_cut_off_by_the_output_limit() {
+    let zero =
+        format!("<cdndataurl>z</cdndataurl><cdndatakey>{KEY_A}</cdndatakey><datasize>0</datasize>");
+    let xml = outer(&record(
+        &(media_item(2, "Outer", &zero) + &media_item(2, "Outer", &full_copy("kept"))),
+    ));
+    assert_eq!(
+        render(&xml).unwrap(),
+        "[Chat History] Fixture\nOuter: [media]\nOuter: [image item=1]"
+    );
+    assert_eq!(media(&xml).unwrap().len(), 1);
+
+    // Fill the output so the second picture's label no longer fits.
+    let filler = "x".repeat(MAX_OUTPUT_BYTES - TRUNCATED.len() - 60);
+    let items = media_item(2, "A", &full_copy("first"))
+        + &item("B", &filler)
+        + &media_item(2, "C", &full_copy("second"));
+    let xml = outer(&record(&items));
+    let text = render(&xml).unwrap();
+    assert!(text.contains("[image item=1]") && !text.contains("item=2]"));
+    assert!(text.ends_with(TRUNCATED));
+    assert_eq!(media(&xml).unwrap().len(), 1);
+}
+
+#[test]
+fn record_media_keeps_a_file_whose_marker_shows_even_when_its_name_is_cut() {
+    let name = "n".repeat(200);
+    let file = format!("<datatitle>{name}</datatitle>{}", full_copy("file"));
+    let filler = "x".repeat(MAX_OUTPUT_BYTES - TRUNCATED.len() - 140);
+    let xml = outer(&record(&(item("B", &filler) + &media_item(8, "C", &file))));
+    let text = render(&xml).unwrap();
+    assert!(text.contains("[file item=1]") && text.ends_with(TRUNCATED));
+    assert_eq!(media(&xml).unwrap().len(), 1);
+
+    let padded = format!(
+        "<cdndataurl>z</cdndataurl><cdndatakey>{KEY_A}</cdndatakey><datasize>00</datasize>"
+    );
+    assert_eq!(
+        media(&outer(&record(&media_item(2, "A", &padded)))).unwrap(),
+        vec![]
+    );
+}

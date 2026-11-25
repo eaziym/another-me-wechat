@@ -375,6 +375,19 @@ pub(crate) fn message_app(msg: &wechat_profile::Message) -> Option<AppMessage> {
 }
 
 pub(crate) fn forwarded_body(msg: &wechat_profile::Message) -> Option<String> {
+    crate::forwarded::render(forwarded_content(msg)?)
+}
+
+/// Pictures, videos and files inside a forwarded chat record, numbered as in
+/// [`forwarded_body`]. None for any other message.
+pub(crate) fn forwarded_media(
+    msg: &wechat_profile::Message,
+) -> Option<Vec<crate::forwarded::RecordMedia>> {
+    crate::forwarded::media(forwarded_content(msg)?)
+}
+
+/// A stored subtype-19 message's XML, without a group sender prefix.
+fn forwarded_content(msg: &wechat_profile::Message) -> Option<&str> {
     if msg.message_type != 49 {
         return None;
     }
@@ -395,7 +408,7 @@ pub(crate) fn forwarded_body(msg: &wechat_profile::Message) -> Option<String> {
     if stored != 0 && stored != 19 {
         return None;
     }
-    crate::forwarded::render(content)
+    Some(content)
 }
 
 #[cfg(test)]

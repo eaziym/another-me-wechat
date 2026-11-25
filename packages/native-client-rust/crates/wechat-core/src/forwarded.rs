@@ -8,6 +8,7 @@ const MAX_XML_NODES: u32 = 20_000;
 const MAX_ITEMS: usize = 500;
 const MAX_DEPTH: usize = 4;
 const MAX_OUTPUT_BYTES: usize = 64 * 1024;
+const MAX_MEDIA: usize = 200;
 const TRUNCATED: &str = "\n[Chat History truncated]";
 
 fn parse(xml: &str) -> Option<Document<'_>> {
@@ -68,12 +69,42 @@ pub(super) fn fallback_title(title: &str) -> String {
     )
 }
 
+/// What a fetchable record item is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RecordMediaKind {
+    Image,
+    Video,
+    File,
+}
+
+/// One picture, video or file inside a forwarded chat record (or a record
+/// nested in it), as the record's dataitem describes its full copy. `number`
+/// is the item's 1-based position among the record's media in the rendered
+/// text; the stored XML never changes, so the number is stable. Dataitems also
+/// name a thumbnail (`cdnthumburl`), but the CDN refused it with the photo
+/// thumbnail transfer type, so it is not listed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RecordMedia {
+    pub number: u32,
+    pub kind: RecordMediaKind,
+    pub title: Option<String>,
+    pub data_url: String,
+    pub data_key: String,
+    pub data_size: Option<String>,
+    pub data_md5: Option<String>,
+}
+
+fn aes_key(value: Option<String>) -> Option<String> {
+    value.filter(|key| key.len() == 32 && key.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
 #[derive(Default)]
 struct Renderer {
     output: String,
     items: usize,
     parsed_bytes: usize,
     truncated: bool,
+    media: Vec<RecordMedia>,
 }
 
 impl Renderer {
@@ -122,6 +153,44 @@ impl Renderer {
         self.record(document.root_element(), depth)
     }
 
+    /// Number a picture (datatype 2), video (4) or file (8) that carries a
+    /// CDN copy, and return its label; None leaves the item's old label.
+    fn media_item(&mut self, item: Node<'_, '_>) -> Option<String> {
+        let (kind, name) = match item.attribute("datatype")? {
+            "2" => (RecordMediaKind::Image, "image"),
+            "4" => (RecordMediaKind::Video, "video"),
+            "8" => (RecordMediaKind::File, "file"),
+            _ => return None,
+        };
+        if self.media.len() == MAX_MEDIA {
+            return None;
+        }
+        let data_url = field(item, "cdndataurl")?;
+        let data_key = aes_key(field(item, "cdndatakey"))?;
+        let data_size = field(item, "datasize");
+        if data_size.as_deref().and_then(|v| v.parse::<u64>().ok()) == Some(0) {
+            return None;
+        }
+        let number = u32::try_from(self.media.len() + 1).ok()?;
+        let title = field(item, "datatitle");
+        let label = match &title {
+            Some(title) if kind == RecordMediaKind::File => {
+                format!("[{name} item={number}] {title}")
+            }
+            _ => format!("[{name} item={number}]"),
+        };
+        self.media.push(RecordMedia {
+            number,
+            kind,
+            title,
+            data_url,
+            data_key,
+            data_size,
+            data_md5: field(item, "fullmd5"),
+        });
+        Some(label)
+    }
+
     fn record(&mut self, record: Node<'_, '_>, depth: usize) -> bool {
         if !record.has_tag_name("recordinfo") || record.tag_name().namespace().is_some() {
             return false;
@@ -149,9 +218,13 @@ impl Renderer {
                     })
                 })
                 .unwrap_or_default();
-            let body = field(item, "datatitle")
-                .or_else(|| field(item, "datadesc"))
-                .unwrap_or_else(|| "[media]".into());
+            let listed = self.media.len();
+            let body = match self.media_item(item) {
+                Some(label) => label,
+                None => field(item, "datatitle")
+                    .or_else(|| field(item, "datadesc"))
+                    .unwrap_or_else(|| "[media]".into()),
+            };
             let nested = child(item, "recordxml");
             let body = if nested.is_some() || item.attribute("datatype") == Some("17") {
                 format!("[Chat History] {body}")
@@ -167,6 +240,13 @@ impl Renderer {
                 },
             );
             if self.truncated {
+                // An item whose marker was cut off is not offered.
+                if let Some(item) = self.media.get(listed) {
+                    let marker = format!(" item={}]", item.number);
+                    if !self.output.contains(&marker) {
+                        self.media.truncate(listed);
+                    }
+                }
                 break;
             }
             if let Some(nested) = nested {
@@ -187,6 +267,16 @@ impl Renderer {
 /// types retain their existing formatting. Missing/invalid records use a title
 /// fallback, not raw XML; missing nested records are labeled explicitly.
 pub(super) fn render(content: &str) -> Option<String> {
+    render_with_media(content).map(|(text, _)| text)
+}
+
+/// The pictures, videos and files of a subtype-19 record, numbered as in
+/// [`render`]'s text. Only items that text shows are listed.
+pub(crate) fn media(content: &str) -> Option<Vec<RecordMedia>> {
+    render_with_media(content).map(|(_, media)| media)
+}
+
+fn render_with_media(content: &str) -> Option<(String, Vec<RecordMedia>)> {
     let document = parse(content)?;
     let root = document.root_element();
     if !root.has_tag_name("msg") || root.tag_name().namespace().is_some() {
@@ -198,7 +288,7 @@ pub(super) fn render(content: &str) -> Option<String> {
     }
     let title = field(app, "title").unwrap_or_default();
     let Some(record) = child(app, "recorditem") else {
-        return Some(fallback_title(&title));
+        return Some((fallback_title(&title), vec![]));
     };
     let mut renderer = Renderer {
         parsed_bytes: content.len(),
@@ -214,9 +304,9 @@ pub(super) fn render(content: &str) -> Option<String> {
     );
     let valid = renderer.embedded_record(record, 0);
     if !renderer.truncated && (!valid || renderer.items == 0) {
-        return Some(fallback_title(&title));
+        return Some((fallback_title(&title), vec![]));
     }
-    Some(renderer.output)
+    Some((renderer.output, renderer.media))
 }
 
 #[cfg(test)]

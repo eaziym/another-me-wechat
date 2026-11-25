@@ -349,6 +349,7 @@ impl Core {
             auto_download_allowed: Some(false),
             sha256: Some(digest(&bytes)),
             filename: Some(format!("{}.gif", plan.content_id)),
+            record_item: None,
             expires_at: None,
             reason: None,
             retryable: false,

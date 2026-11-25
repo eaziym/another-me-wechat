@@ -183,6 +183,12 @@ pub struct MediaAsset {
     pub sha256: Option<String>,
     /// File name of the attachment, when it has one. Null otherwise.
     pub filename: Option<String>,
+    /// For a picture, video or file inside a forwarded chat record, its number in the record's
+    /// text, where it shows as `[image item=N]`. Items of nested records share one numbering.
+    /// Omitted for an ordinary attachment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub record_item: Option<u32>,
     /// When WeChat's copy expires, as Unix time in seconds. Null when WeChat gave no expiry.
     #[ts(type = "number | null")]
     pub expires_at: Option<u64>,
