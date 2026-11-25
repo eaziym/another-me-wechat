@@ -1,6 +1,48 @@
-# Agent WeChat
+# another-me-wechat
 
 [English](README.md) | 简体中文
+
+[Agent WeChat](https://github.com/thisnick/agent-wechat) 的分支（基于上游提交
+[`bb17071`](https://github.com/thisnick/agent-wechat/commit/bb17071)），作为
+[another-me](https://github.com/eaziym/another-me)（在你自己 Mac 上运行的个人 AI 助理）连接微信的方式。代码就是上游的代码，
+加上下面几项修复。上游发布的版本（npm、桌面安装包）不含这些修复，请从源码构建。从[关于 Agent WeChat](#关于-agent-wechat)
+开始的内容是上游的 README，未作改动。
+
+> [!WARNING]
+> 这是非官方的微信客户端。它以新设备身份登录，像官方应用一样与微信服务器通信，这不符合微信的使用条款。微信可能限制或封禁它认为在使用
+> 此类客户端的账号。条件允许请用小号；用主号是你自己的选择，风险自负。
+
+## 这个分支改了什么
+
+1. **手机发出的语音能解码。** 手机会在语音后面补上 `00 80` 和一串 0，补到它声明的长度。上游会拒收（`invalid_silk_packet`，显示为
+   `media_processing_failed`），这里 `silk::decode` 先去掉这段填充，校验依旧严格。
+2. **解码失败的语音可以重新获取**（明确请求时；上游把失败的任务标为不可重试），失败的媒体任务会把真实错误写进 daemon 日志（`wx daemon logs`）。
+3. **不再持续写盘。** 上游在自己的读取进行中，每次重新打开都会复制并校验账号数据库（`control.sqlite`），一秒好几次：全天 100–150 MB/s
+   的写入。本分支在读取进行中直接打开同一个文件、不再复制；没有读取时与上游相同。也不再保存每条群更新的原始副本（没人读取，却占了数据库的三分之二）。
+4. **合并转发的聊天记录里的图片、视频和文件可以获取**，嵌套的也可以。记录正文会给每项编号（`[image item=N]`），消息的媒体列表里每个编号对应一个
+   asset（`recordItem`），传输必须指明 asset（否则返回 `media_asset_required`）。记录缩略图不提供：微信 CDN 会拒绝。
+
+这些修复是上游之上的三个提交（前两项在同一个提交里），`git log bb17071..` 可以看到全部内容。
+
+## 构建与运行
+
+需要 Rust（版本固定在 `rust-toolchain.toml`，用 [rustup](https://rustup.rs) 安装），语音和视频还需要 FFmpeg（`brew install ffmpeg`）。
+
+```bash
+git clone https://github.com/eaziym/another-me-wechat
+cd another-me-wechat/packages/native-client-rust
+cargo build --release -p wx-native
+./target/release/wx daemon start     # 监听 127.0.0.1:6174；数据在 ~/.local/share/agent-wechat
+./target/release/wx auth login       # 显示二维码，用手机微信扫码
+./target/release/wx daemon status
+```
+
+another-me 需要的三个 token（读取、发送、媒体）及其用途，见 [another-me 文档的微信页面](https://github.com/eaziym/another-me/blob/main/docs/apps/wechat.md)
+和上面英文部分的命令。
+
+---
+
+## 关于 Agent WeChat
 
 **面向人与 AI 智能体的开源微信客户端。**
 

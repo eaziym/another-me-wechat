@@ -1,6 +1,85 @@
-# Agent WeChat
+# another-me-wechat
 
 English | [简体中文](README.zh-CN.md)
+
+A fork of [Agent WeChat](https://github.com/thisnick/agent-wechat) (upstream commit
+[`bb17071`](https://github.com/thisnick/agent-wechat/commit/bb17071)), kept as the WeChat connection for
+[another-me](https://github.com/eaziym/another-me), a personal agent that runs on your Mac. It is upstream's code
+plus the four changes below. Upstream's own builds (npm, the desktop installers) do not have them, so build this one
+from source. Everything after [About Agent WeChat](#about-agent-wechat) is upstream's README, unchanged.
+
+> [!WARNING]
+> This is an unofficial WeChat client. It signs in as a new device and talks to WeChat's servers the way the
+> official app does, which WeChat's terms do not allow. WeChat can restrict or ban an account it suspects of using
+> one. Use a spare account if you can; if you use your main one, that is your choice and your risk.
+
+## What this fork changes
+
+1. **Voice notes sent from your phone decode.** The phone pads a voice note with `00 80` and zeros up to its
+   advertised length. Upstream refuses such a note (`invalid_silk_packet`, shown as `media_processing_failed`);
+   here `silk::decode` drops the padding first. Validation stays strict.
+2. **A voice note that failed to decode can be fetched again**, by asking for it explicitly (upstream marks the failed
+   job as not retryable), and a failed media job writes its real error to the daemon log (`wx daemon logs`).
+3. **No more constant disk writes.** While one of its own reads is open, upstream copied and validated the account
+   store (`control.sqlite`) on every reopen, several times a second: 100 to 150 MB/s of writes, all day. This fork
+   opens the same file without the copy while a read is open, and validates as upstream does otherwise. It also stops
+   keeping a raw copy of every group update, which nothing read and which was two thirds of the store.
+4. **Pictures, videos and files inside a forwarded chat record (合并转发) can be fetched**, nested records too. The
+   record's text numbers each item (`[image item=N]`), the message's media listing has one asset per number
+   (`recordItem`), and a transfer must name its asset (`media_asset_required` otherwise). Record thumbnails are not
+   offered: WeChat's CDN refuses them.
+
+They are three commits on top of upstream (the first two changes share one), so `git log bb17071..` shows them in full.
+
+## Build and run it
+
+You need Rust (the version is pinned in `rust-toolchain.toml`; [rustup](https://rustup.rs) installs it) and, for
+voice and video, FFmpeg (`brew install ffmpeg`).
+
+```bash
+git clone https://github.com/eaziym/another-me-wechat
+cd another-me-wechat/packages/native-client-rust
+cargo build --release -p wx-native
+./target/release/wx daemon start     # listens on 127.0.0.1:6174; data in ~/.local/share/agent-wechat
+./target/release/wx auth login       # shows a QR code: scan it with WeChat on your phone
+./target/release/wx daemon status
+```
+
+Put `target/release` on your PATH, or call it by its full path. The daemon records where its program lives, so stop
+it (`wx daemon stop`) before moving the folder. After pulling a change, rebuild, then `wx daemon stop && wx daemon start`:
+a few seconds offline, no new login.
+
+### Tokens for another-me
+
+another-me gives each of its tools the narrowest token it needs, never the owner token. Create three, each saved to
+its own file that only you can read:
+
+```bash
+mkdir -p ~/.config/anotherme && chmod 700 ~/.config/anotherme
+wx tokens create another-me-read  --accounts '*' --scopes read   # -> ~/.config/anotherme/wechat-token
+wx tokens create another-me-send  --accounts '*' --scopes send   # -> ~/.config/anotherme/wechat-send-token
+wx tokens create another-me-media --accounts '*' --scopes media  # -> ~/.config/anotherme/wechat-media-token
+chmod 600 ~/.config/anotherme/wechat-*token
+```
+
+Each command prints its token once. Skip the send token if you only want reading. The
+[WeChat page of another-me's docs](https://github.com/eaziym/another-me/blob/main/docs/apps/wechat.md) explains what
+each token is used for and how sending is kept under your control.
+
+### Known test failures
+
+About ten of the Rust tests fail on macOS with or without these changes (temporary-folder paths, and a decoder that
+exists only on Linux). They are not a sign of a broken build.
+
+## Keeping up with upstream
+
+`main` here is upstream at `bb17071` plus the commits above. Upstream has moved on since; moving the base means
+rebasing these commits, rebuilding, and checking voice notes, media and disk writes again before relying on it.
+The fixes are written so they can be offered upstream as separate pull requests.
+
+---
+
+## About Agent WeChat
 
 **An open source WeChat client for people and AI agents.**
 
